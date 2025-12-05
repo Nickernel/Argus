@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>二维仿射变换可视化</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 保持画布居中和响应式 */
+        #affineCanvas {
+            border: 2px solid #3b82f6;
+            background-color: #f9fafb;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .matrix-cell {
+            min-width: 40px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen p-4 sm:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white p-6 sm:p-8 rounded-xl shadow-2xl">
+        <h1 class="text-3xl font-extrabold text-blue-800 mb-6 border-b pb-2">
+            二维仿射变换可视化
+        </h1>
+        <p class="text-gray-600 mb-6">
+            请选择一种变换类型，并调整参数，实时观察图形（字母 'F'）的变换效果和对应的 $3 \times 3$ 变换矩阵。
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <!-- 变换选择 -->
+            <div>
+                <label for="transformType" class="block text-sm font-medium text-gray-700 mb-1">选择变换类型</label>
+                <select id="transformType" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150">
+                    <option value="identity">1. 无变化 (Identity)</option>
+                    <option value="translate">2. 平移 (Translate)</option>
+                    <option value="scale">3. 缩放 (Scale)</option>
+                    <option value="rotate">4. 旋转 (Rotate)</option>
+                    <option value="shearX">5. X 轴剪切 (Shear X)</option>
+                    <option value="shearY">6. Y 轴剪切 (Shear Y)</option>
+                    <option value="reflectX">7. X 轴反射 (Reflect X)</option>
+                    <option value="reflectY">8. Y 轴反射 (Reflect Y)</option>
+                    <option value="reflectOrigin">9. 绕原点反射 (Reflect Origin)</option>
+                </select>
+            </div>
+
+            <!-- 参数输入 -->
+            <div id="paramInputs" class="col-span-1 md:col-span-2 grid grid-cols-2 gap-4">
+                <!-- 参数将由 JavaScript 动态生成 -->
+            </div>
+        </div>
+
+        <div class="flex flex-col lg:flex-row gap-6">
+            <!-- Canvas 绘图区域 -->
+            <div class="flex-grow lg:w-1/2">
+                <h3 class="text-lg font-semibold text-blue-700 mb-2">变换效果</h3>
+                <canvas id="affineCanvas" width="400" height="400" class="w-full h-auto rounded-lg"></canvas>
+            </div>
+
+            <!-- 矩阵显示区域 -->
+            <div class="lg:w-1/2">
+                <h3 class="text-lg font-semibold text-blue-700 mb-2">变换矩阵 (3x3)</h3>
+                <div class="p-4 bg-gray-100 rounded-lg shadow-inner">
+                    <table class="w-full text-xl font-mono border-separate border-spacing-1">
+                        <tbody id="matrixDisplay">
+                            <!-- 矩阵将由 JavaScript 填充 -->
+                        </tbody>
+                    </table>
+                </div>
+                <p id="matrixFormula" class="text-sm text-gray-500 mt-2 text-center"></p>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const canvas = document.getElementById('affineCanvas');
+        const ctx = canvas.getContext('2d');
+        const transformType = document.getElementById('transformType');
+        const paramInputs = document.getElementById('paramInputs');
+        const matrixDisplay = document.getElementById('matrixDisplay');
+        const matrixFormula = document.getElementById('matrixFormula');
+
+        const CANVAS_SIZE = 400;
+        const ORIGIN_X = CANVAS_SIZE / 2;
+        const ORIGIN_Y = CANVAS_SIZE / 2;
+        const SCALE_FACTOR = 100; // 1 unit in the coordinate system = 100 pixels
+
+        // --- 1. 原始图形定义 (字母 'F' 和一个单位正方形) ---
+        // F shape defined in coordinates relative to the origin (0,0)
+        const F_SHAPE_POINTS = [
+            // Outer Square (for context, centered at 0.5, 0.5)
+            [0, 0, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+            [0, 1, 1],
+            [0, 0, 1], // close square
+            // F shape relative to (0,0)
+            [0.1, 0.1, 1], [0.5, 0.1, 1], [0.5, 0.2, 1], [0.2, 0.2, 1],
+            [0.2, 0.5, 1], [0.5, 0.5, 1], [0.5, 0.6, 1], [0.2, 0.6, 1],
+            [0.2, 0.9, 1], [0.1, 0.9, 1], [0.1, 0.1, 1] // close F
+        ];
+
+        // --- 2. 变换矩阵计算函数 ---
+
+        const getMatrix = () => {
+            const type = transformType.value;
+            let M = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+
+            // Helper to get parameter value
+            const getVal = (id, defaultValue) => parseFloat(document.getElementById(id)?.value || defaultValue);
+            
+            switch (type) {
+                case 'translate': {
+                    const X = getVal('paramX', 0);
+                    const Y = getVal('paramY', 0);
+                    M = [[1, 0, X], [0, 1, Y], [0, 0, 1]];
+                    matrixFormula.textContent = `x' = x + ${X}, y' = y + ${Y}`;
+                    break;
+                }
+                case 'scale': {
+                    const W = getVal('paramW', 1);
+                    const H = getVal('paramH', 1);
+                    M = [[W, 0, 0], [0, H, 0], [0, 0, 1]];
+                    matrixFormula.textContent = `x' = x * ${W}, y' = y * ${H}`;
+                    break;
+                }
+                case 'rotate': {
+                    const deg = getVal('paramTheta', 0);
+                    const rad = deg * (Math.PI / 180);
+                    const cos = Math.cos(rad);
+                    const sin = Math.sin(rad);
+                    M = [[cos, -sin, 0], [sin, cos, 0], [0, 0, 1]];
+                    matrixFormula.textContent = `x' = x cosθ - y sinθ, y' = x sinθ + y cosθ`;
+                    break;
+                }
+                case 'shearX': {
+                    const factor = getVal('paramShearX', 0); // tan(phi)
+                    M = [[1, factor, 0], [0, 1, 0], [0, 0, 1]];
+                    matrixFormula.textContent = `x' = x + y * ${factor}, y' = y`;
+                    break;
+                }
+                case 'shearY': {
+                    const factor = getVal('paramShearY', 0); // tan(psi)
+                    M = [[1, 0, 0], [factor, 1, 0], [0, 0, 1]];
+                    matrixFormula.textContent = `x' = x, y' = y + x * ${factor}`;
+                    break;
+                }
+                case 'reflectX':
+                    M = [[1, 0, 0], [0, -1, 0], [0, 0, 1]];
+                    matrixFormula.textContent = `x' = x, y' = -y (沿X轴反射)`;
+                    break;
+                case 'reflectY':
+                    M = [[-1, 0, 0], [0, 1, 0], [0, 0, 1]];
+                    matrixFormula.textContent = `x' = -x, y' = y (沿Y轴反射)`;
+                    break;
+                case 'reflectOrigin':
+                    M = [[-1, 0, 0], [0, -1, 0], [0, 0, 1]];
+                    matrixFormula.textContent = `x' = -x, y' = -y (绕原点反射)`;
+                    break;
+                case 'identity':
+                default:
+                    M = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+                    matrixFormula.textContent = `无变化，恒等矩阵`;
+                    break;
+            }
+            return M;
+        };
+
+        // --- 3. 核心绘图函数 ---
+
+        const drawGrid = () => {
+            ctx.beginPath();
+            ctx.strokeStyle = '#e5e7eb'; // Light gray grid lines
+            ctx.lineWidth = 1;
+            
+            // X-axis
+            ctx.moveTo(0, ORIGIN_Y);
+            ctx.lineTo(CANVAS_SIZE, ORIGIN_Y);
+            // Y-axis
+            ctx.moveTo(ORIGIN_X, 0);
+            ctx.lineTo(ORIGIN_X, CANVAS_SIZE);
+
+            // Ticks
+            ctx.strokeStyle = '#cccccc';
+            for (let i = -2; i <= 2; i++) {
+                if (i === 0) continue;
+                // X Ticks
+                ctx.moveTo(ORIGIN_X + i * SCALE_FACTOR, ORIGIN_Y - 5);
+                ctx.lineTo(ORIGIN_X + i * SCALE_FACTOR, ORIGIN_Y + 5);
+                // Y Ticks
+                ctx.moveTo(ORIGIN_X - 5, ORIGIN_Y + i * SCALE_FACTOR);
+                ctx.lineTo(ORIGIN_X + 5, ORIGIN_Y + i * SCALE_FACTOR);
+
+                ctx.fillStyle = '#6b7280';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillText(i, ORIGIN_X + i * SCALE_FACTOR, ORIGIN_Y + 7);
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(-i, ORIGIN_X - 7, ORIGIN_Y + i * SCALE_FACTOR);
+            }
+            
+            ctx.stroke();
+
+            // Draw thicker axes
+            ctx.beginPath();
+            ctx.strokeStyle = '#1f2937'; // Darker axes
+            ctx.lineWidth = 1.5;
+            ctx.moveTo(0, ORIGIN_Y);
+            ctx.lineTo(CANVAS_SIZE, ORIGIN_Y);
+            ctx.moveTo(ORIGIN_X, 0);
+            ctx.lineTo(ORIGIN_X, CANVAS_SIZE);
+            ctx.stroke();
+
+            // Draw Origin Dot
+            ctx.fillStyle = 'red';
+            ctx.beginPath();
+            ctx.arc(ORIGIN_X, ORIGIN_Y, 3, 0, Math.PI * 2);
+            ctx.fill();
+        };
+
+        const transformPoint = (M, P) => {
+            // M is 3x3 matrix, P is [x, y, 1] vector
+            const x = M[0][0] * P[0] + M[0][1] * P[1] + M[0][2] * P[2];
+            const y = M[1][0] * P[0] + M[1][1] * P[1] + M[1][2] * P[2];
+            const w = M[2][0] * P[0] + M[2][1] * P[1] + M[2][2] * P[2]; // Should be 1 for affine transform
+
+            // Convert back to canvas coordinates
+            const canvasX = ORIGIN_X + (x / w) * SCALE_FACTOR;
+            const canvasY = ORIGIN_Y - (y / w) * SCALE_FACTOR; // Y-axis is inverted in canvas
+            return { x: canvasX, y: canvasY };
+        };
+
+        const drawShape = (points, style) => {
+            if (points.length === 0) return;
+
+            ctx.beginPath();
+            ctx.strokeStyle = style.stroke || 'black';
+            ctx.fillStyle = style.fill || 'transparent';
+            ctx.lineWidth = style.width || 2;
+            
+            ctx.moveTo(points[0].x, points[0].y);
+            
+            for (let i = 1; i < points.length; i++) {
+                // Special handling for the F shape drawing
+                if (style.isF && (i === 5 || i === 9 || i === 11)) {
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(points[i].x, points[i].y);
+                } else {
+                    ctx.lineTo(points[i].x, points[i].y);
+                }
+            }
+
+            if (style.fill !== 'transparent') {
+                ctx.fill();
+            }
+            ctx.stroke();
+        };
+
+        const draw = () => {
+            ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            drawGrid();
+
+            const M = getMatrix();
+            const transformedPoints = F_SHAPE_POINTS.map(P => transformPoint(M, P));
+            
+            // Draw Original Shape (Gray Outline)
+            const originalPoints = F_SHAPE_POINTS.map(P => transformPoint([[1, 0, 0], [0, 1, 0], [0, 0, 1]], P));
+            drawShape(originalPoints.slice(0, 5), { stroke: '#a0a0a0', fill: 'transparent', width: 1 }); // Square
+            
+            // Draw Transformed Shape (Blue Fill)
+            drawShape(transformedPoints.slice(0, 5), { stroke: '#ef4444', fill: '#bfdbfe', width: 2 }); // Transformed Square
+
+            // Draw Transformed F
+            drawShape(transformedPoints.slice(5), { stroke: '#dc2626', fill: 'transparent', width: 3, isF: true }); // Transformed F
+
+            updateMatrixDisplay(M);
+        };
+
+        // --- 4. UI 渲染和事件处理 ---
+
+        const updateMatrixDisplay = (M) => {
+            let html = '';
+            for (let i = 0; i < 3; i++) {
+                html += '<tr>';
+                for (let j = 0; j < 3; j++) {
+                    const value = M[i][j].toFixed(M[i][j] === 0 || M[i][j] === 1 || M[i][j] === -1 ? 0 : 3);
+                    html += `<td class="matrix-cell border border-gray-300 p-1">${value}</td>`;
+                }
+                html += '</tr>';
+            }
+            matrixDisplay.innerHTML = html;
+        };
+
+        const updateParamInputs = () => {
+            const type = transformType.value;
+            paramInputs.innerHTML = '';
+            
+            const createInput = (id, label, defaultValue, step) => {
+                const div = document.createElement('div');
+                div.innerHTML = `
+                    <label for="${id}" class="block text-sm font-medium text-gray-700">${label}</label>
+                    <input type="number" id="${id}" value="${defaultValue}" step="${step}"
+                        class="mt-1 w-full p-2 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500"
+                        oninput="draw()">
+                `;
+                return div;
+            };
+
+            switch (type) {
+                case 'translate':
+                    paramInputs.appendChild(createInput('paramX', 'X 轴平移 (X)', 0.5, 0.1));
+                    paramInputs.appendChild(createInput('paramY', 'Y 轴平移 (Y)', 0.5, 0.1));
+                    break;
+                case 'scale':
+                    paramInputs.appendChild(createInput('paramW', 'X 轴缩放 (W)', 1.5, 0.1));
+                    paramInputs.appendChild(createInput('paramH', 'Y 轴缩放 (H)', 0.8, 0.1));
+                    break;
+                case 'rotate':
+                    paramInputs.appendChild(createInput('paramTheta', '旋转角度 (θ, 度)', 45, 5));
+                    break;
+                case 'shearX':
+                    paramInputs.appendChild(createInput('paramShearX', 'X 轴剪切因子 (tan(φ))', 0.5, 0.1));
+                    break;
+                case 'shearY':
+                    paramInputs.appendChild(createInput('paramShearY', 'Y 轴剪切因子 (tan(ψ))', 0.5, 0.1));
+                    break;
+                case 'reflectX':
+                case 'reflectY':
+                case 'reflectOrigin':
+                    paramInputs.innerHTML = '<div class="col-span-2 text-sm text-gray-500 mt-2">此变换无额外参数。</div>';
+                    break;
+                case 'identity':
+                default:
+                    paramInputs.innerHTML = '<div class="col-span-2 text-sm text-gray-500 mt-2">恒等变换，无参数。</div>';
+                    break;
+            }
+            draw(); // Redraw after updating inputs
+        };
+        
+        // 初始化
+        transformType.addEventListener('change', updateParamInputs);
+        window.onload = () => {
+            updateParamInputs();
+        };
+
+    </script>
+
+</body>
+</html>
